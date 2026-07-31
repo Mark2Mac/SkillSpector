@@ -551,6 +551,34 @@ class TestMemoryPoisoning:
     def test_mp2_separator_not_flagged(self) -> None:
         assert not any(f.rule_id == "MP2" for f in mp_mod.analyze("=" * 80, "test.md", "markdown"))
 
+    def test_mp2_aligned_markdown_table_is_layout(self) -> None:
+        # An aligned table repeats spaces and dashes because cells are being lined up, not
+        # because context is being displaced.
+        content = (
+            "| campo      | quando            | significato                        |\n"
+            "| ---------- | ----------------- | ---------------------------------- |\n"
+            "| id         | sempre            | identificatore stabile del record  |\n"
+            "| aggiornato | dopo ogni scrittura | timestamp dell'ultima modifica   |\n"
+        )
+        assert not any(f.rule_id == "MP2" for f in mp_mod.analyze(content, "docs/tabella.md", "markdown"))
+
+    def test_mp2_ascii_box_is_layout(self) -> None:
+        content = "│  └───────────────────────────────────────────────────────┘  │\n"
+        assert not any(f.rule_id == "MP2" for f in mp_mod.analyze(content, "README.md", "markdown"))
+
+    def test_mp2_padded_column_in_code_is_layout(self) -> None:
+        content = 'lines.append(f"{Colors.DIM}|{Colors.RESET}                                   ")\n'
+        assert not any(f.rule_id == "MP2" for f in mp_mod.analyze(content, "src/ui.py", "python"))
+
+    def test_mp2_whitespace_run_beyond_layout_width_is_still_stuffing(self) -> None:
+        # Layout stops being a plausible explanation well before this width.
+        content = "testo" + " " * 800 + "altro testo\n"
+        assert any(f.rule_id == "MP2" for f in mp_mod.analyze(content, "test.md", "markdown"))
+
+    def test_mp2_repeated_content_is_still_stuffing(self) -> None:
+        # The unit repeated here is content, not alignment: unchanged behaviour.
+        assert any(f.rule_id == "MP2" for f in mp_mod.analyze("lorem " * 60, "test.md", "markdown"))
+
     @pytest.mark.parametrize(
         "content",
         [

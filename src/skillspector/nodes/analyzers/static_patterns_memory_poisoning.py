@@ -79,6 +79,15 @@ MP1_PATTERNS = [
     ),
 ]
 
+# Layout filler: characters that repeat because something is being *aligned*, not because
+# context is being displaced — aligned table cells, ASCII boxes, horizontal rules, padded
+# columns built by UI code. Box drawing is U+2500-U+257F.
+_MP2_LAYOUT_FILLER = re.compile(r"^[\s\-=_*.|:+~\u2500-\u257F]+$")
+
+# Above this width the run stops being plausible formatting: nobody reads a table row or an
+# ASCII box 400 characters wide, so a repetition that long is reported even if it is filler.
+_MP2_LAYOUT_MAX_RUN = 400
+
 # MP2: Context Window Stuffing — filling context to displace content
 MP2_PATTERNS = [
     (r"(.{2,20}?)\1{20,}", 0.8),
@@ -185,6 +194,14 @@ def analyze(content: str, file_path: str, file_type: str) -> list[AnalyzerFindin
             captured = match.group(1) if match.lastindex else match.group(0)
             non_ws_chars = set(captured) - {" ", "\t", "\n", "\r"}
             if len(non_ws_chars) <= 1 and not any(c in captured for c in (" ", "\t")):
+                continue
+            # Same reasoning as the guard above, extended to the case it misses: a unit made
+            # only of whitespace and alignment characters repeats because a table, a box or a
+            # column is being drawn. Runs wider than a readable line are still reported.
+            if (
+                _MP2_LAYOUT_FILLER.match(captured)
+                and len(match.group(0)) < _MP2_LAYOUT_MAX_RUN
+            ):
                 continue
             line_num = get_line_number(content, match.start())
             findings.append(
