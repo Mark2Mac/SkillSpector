@@ -233,7 +233,7 @@ _BAR_PLACEHOLDER = "\x00"
 
 
 def _strip_markdown_structure(line: str) -> str:
-    """Drop markdown delimiters that would otherwise read as shell metacharacters.
+    r"""Drop markdown delimiters that would otherwise read as shell metacharacters.
 
     In a table row an unescaped ``|`` separates cells; a literal pipe inside a cell has to be
     written ``\|`` (CommonMark). That distinction is what makes this safe: the delimiters are
