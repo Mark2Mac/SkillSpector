@@ -457,6 +457,62 @@ def _extract_python_requirement(spec: str) -> tuple[str, str | None] | None:
     return requirement.name, _pinned_version(specifier.operator, specifier.version)
 
 
+def _logical_requirement_lines(content: str) -> list[tuple[int, str]]:
+    """Join pip-style continuations and retain each logical line's first line number."""
+    logical_lines: list[tuple[int, str]] = []
+    parts: list[str] = []
+    start_line = 1
+
+    for line_num, line in enumerate(content.splitlines(), 1):
+        if not parts:
+            start_line = line_num
+
+        is_comment = line.lstrip().startswith("#")
+        if line.endswith("\\") and not is_comment:
+            parts.append(line.strip("\\"))
+            continue
+
+        if is_comment:
+            # pip prefixes a comment that closes a continued line with a space,
+            # allowing its later comment-stripping pass to recognize it.
+            line = " " + line
+        parts.append(line)
+        logical_lines.append((start_line, "".join(parts)))
+        parts = []
+
+    if parts:
+        logical_lines.append((start_line, "".join(parts)))
+    return logical_lines
+
+
+def _strip_pip_per_requirement_options(line: str) -> str:
+    """Remove pip-only options while preserving the original PEP 508 prefix."""
+    quote: str | None = None
+    escaped = False
+    token_start = True
+
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+            token_start = False
+        elif char == "\\":
+            escaped = True
+            token_start = False
+        elif quote:
+            if char == quote:
+                quote = None
+        elif char in {"'", '"'}:
+            quote = char
+            token_start = False
+        elif char.isspace():
+            token_start = True
+        elif token_start and char == "-":
+            return line[:index].rstrip()
+        else:
+            token_start = False
+    return line
+
+
 def _pinned_npm_version(spec: str) -> str | None:
     """Return the pinned version of an npm dependency spec, or None for any range.
 
@@ -472,7 +528,7 @@ def _pinned_npm_version(spec: str) -> str | None:
 def _extract_packages_from_requirements(content: str) -> list[tuple[str, str | None, int]]:
     """Extract (package_name, version_or_None, line_number) from requirements.txt format."""
     results: list[tuple[str, str | None, int]] = []
-    for i, line in enumerate(content.splitlines(), 1):
+    for line_num, line in _logical_requirement_lines(content):
         line = line.strip()
         if not line or line.startswith("#") or line.startswith("-"):
             continue
@@ -480,10 +536,11 @@ def _extract_packages_from_requirements(content: str) -> list[tuple[str, str | N
         # PEP 508 parsing does not. Preserve normal requirements.txt behavior
         # before handing the complete requirement to ``packaging``.
         line = re.split(r"\s+#", line, maxsplit=1)[0]
+        line = _strip_pip_per_requirement_options(line)
         requirement = _extract_python_requirement(line)
         if requirement:
             name, version = requirement
-            results.append((name, version, i))
+            results.append((name, version, line_num))
     return results
 
 

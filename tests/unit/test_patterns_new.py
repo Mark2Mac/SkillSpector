@@ -1322,6 +1322,45 @@ class TestSupplyChainHelpers:
             "pillow-epoch": "1!10.0",
         }
 
+    def test_extract_packages_requirements_strips_pip_per_requirement_options(self) -> None:
+        content = """\
+requests==2.31.0 --hash=sha256:abc --config-settings=build-option=value
+urllib3==2.2.0 \\
+  --hash=sha256:def \\
+  --hash sha256:ghi
+certifi==2024.2.2 ; python_version >= "3.12" -C build-option=value
+packaging==24.0 --config-settings build-option=value
+idna==3.7 -Cbuild-option=value
+charset-normalizer==3.3.2 --config-settings="build-option=foo bar"
+tomli==2.0.1 --config-settings "build-option=foo bar"
+example-pkg==1.0 ; platform_release == "--rolling" --hash=sha256:jkl
+"""
+        assert sc_mod._extract_packages_from_requirements(content) == [
+            ("requests", "2.31.0", 1),
+            ("urllib3", "2.2.0", 2),
+            ("certifi", "2024.2.2", 5),
+            ("packaging", "24.0", 6),
+            ("idna", "3.7", 7),
+            ("charset-normalizer", "3.3.2", 8),
+            ("tomli", "2.0.1", 9),
+            ("example-pkg", "1.0", 10),
+        ]
+
+    def test_extract_packages_requirements_uses_pip_continuation_semantics(self) -> None:
+        content = """\
+pillow==10.0.\\
+0
+# comment \\
+requests==2.31.0
+idna==3.7\\
+# comment
+"""
+        assert sc_mod._extract_packages_from_requirements(content) == [
+            ("pillow", "10.0.0", 1),
+            ("requests", "2.31.0", 4),
+            ("idna", "3.7", 5),
+        ]
+
     def test_extract_packages_pyproject_specifier_is_not_a_pin(self) -> None:
         content = (
             "[build-system]\n"
