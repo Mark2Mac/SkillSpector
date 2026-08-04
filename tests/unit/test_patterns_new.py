@@ -1266,14 +1266,14 @@ class TestSupplyChainHelpers:
         # A vulnerability lookup asks "is THIS release affected?", which is only meaningful
         # when the manifest admits exactly one release. Everything else must yield None.
         assert sc_mod._pinned_version("==", "2.31.0") == "2.31.0"
-        assert sc_mod._pinned_version("==", "1.*") is None      # wildcard equality
-        assert sc_mod._pinned_version("<=", "8.1.0") is None    # cap: admits every earlier
+        assert sc_mod._pinned_version("==", "1.*") is None  # wildcard equality
+        assert sc_mod._pinned_version("<=", "8.1.0") is None  # cap: admits every earlier
         assert sc_mod._pinned_version("<", "8.1.0") is None
-        assert sc_mod._pinned_version(">=", "10.0.0") is None   # floor
+        assert sc_mod._pinned_version(">=", "10.0.0") is None  # floor
         assert sc_mod._pinned_version(">", "10.0.0") is None
-        assert sc_mod._pinned_version("~=", "1.26.0") is None   # compatible release
-        assert sc_mod._pinned_version("!=", "3.0.0") is None    # exclusion
-        assert sc_mod._pinned_version(None, None) is None       # bare dependency
+        assert sc_mod._pinned_version("~=", "1.26.0") is None  # compatible release
+        assert sc_mod._pinned_version("!=", "3.0.0") is None  # exclusion
+        assert sc_mod._pinned_version(None, None) is None  # bare dependency
 
     def test_pinned_npm_version_rejects_ranges(self) -> None:
         # npm defaults to caret ranges: stripping the operator turns a range into a concrete
@@ -1292,13 +1292,13 @@ class TestSupplyChainHelpers:
         # Regression: any specifier was treated as "==", so the floor "pillow>=10.0.0" was
         # scanned as the exact release 10.0.0 and flagged with that release's CVEs.
         content = (
-            "requests==2.31.0\n"      # exact pin  -> kept
-            "pillow>=10.0.0\n"        # floor      -> None
-            "click<=8.1.0\n"          # cap        -> None
-            "urllib3~=1.26.0\n"       # compatible -> None
-            "jinja2!=3.0.0\n"         # exclusion  -> None
-            "boto3==1.*\n"            # wildcard   -> None
-            "flask\n"                 # unpinned   -> None
+            "requests==2.31.0\n"  # exact pin  -> kept
+            "pillow>=10.0.0\n"  # floor      -> None
+            "click<=8.1.0\n"  # cap        -> None
+            "urllib3~=1.26.0\n"  # compatible -> None
+            "jinja2!=3.0.0\n"  # exclusion  -> None
+            "boto3==1.*\n"  # wildcard   -> None
+            "flask\n"  # unpinned   -> None
         )
         versions = {p[0]: p[1] for p in sc_mod._extract_packages_from_requirements(content)}
         assert versions["requests"] == "2.31.0"
