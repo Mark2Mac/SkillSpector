@@ -32,6 +32,9 @@ import sys
 import tomllib
 from urllib.parse import urlparse
 
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.version import InvalidVersion, Version
+
 from skillspector.inspection_ledger import LedgerOutcome, analyzer_status_for_events, ledger_event
 from skillspector.logging_config import get_logger
 from skillspector.models import AnalyzerFinding, Finding, Location, Severity
@@ -428,7 +431,30 @@ def _pinned_version(operator: str | None, version: str | None) -> str | None:
     """
     if operator != "==" or not version or "*" in version:
         return None
+    try:
+        Version(version)
+    except InvalidVersion:
+        return None
     return version
+
+
+def _extract_python_requirement(spec: str) -> tuple[str, str | None] | None:
+    """Extract a package and a concrete PEP 440 pin from a PEP 508 requirement.
+
+    ``packaging`` parses complete specifiers rather than accepting a numeric prefix.
+    That keeps valid PEP 440 versions such as ``10.0.0rc1``, ``10.0.0.post1``,
+    and ``1!10.0`` intact for OSV queries.
+    """
+    try:
+        requirement = Requirement(spec)
+    except InvalidRequirement:
+        return None
+
+    specifiers = list(requirement.specifier)
+    if len(specifiers) != 1:
+        return requirement.name, None
+    specifier = specifiers[0]
+    return requirement.name, _pinned_version(specifier.operator, specifier.version)
 
 
 def _pinned_npm_version(spec: str) -> str | None:
@@ -450,10 +476,13 @@ def _extract_packages_from_requirements(content: str) -> list[tuple[str, str | N
         line = line.strip()
         if not line or line.startswith("#") or line.startswith("-"):
             continue
-        m = re.match(r"^([a-zA-Z][a-zA-Z0-9._-]*)(?:\[.*?\])?\s*(?:([=<>!~]=?)\s*([\d.*]+))?", line)
-        if m:
-            name = m.group(1)
-            version = _pinned_version(m.group(2), m.group(3))
+        # pip treats a whitespace-prefixed ``#`` as an inline comment, while
+        # PEP 508 parsing does not. Preserve normal requirements.txt behavior
+        # before handing the complete requirement to ``packaging``.
+        line = re.split(r"\s+#", line, maxsplit=1)[0]
+        requirement = _extract_python_requirement(line)
+        if requirement:
+            name, version = requirement
             results.append((name, version, i))
     return results
 
@@ -516,11 +545,10 @@ def _extract_packages_from_pyproject(content: str) -> list[tuple[str, str | None
 
     results: list[tuple[str, str | None, int]] = []
     for spec in specs:
-        m = re.match(r"^([a-zA-Z][a-zA-Z0-9._-]*)(?:\[.*?\])?\s*(?:([=<>!~]=?)\s*([\d.*]+))?", spec)
-        if not m:
+        requirement = _extract_python_requirement(spec)
+        if not requirement:
             continue
-        name = m.group(1)
-        version = _pinned_version(m.group(2), m.group(3))
+        name, version = requirement
         idx = content.find(spec)
         line_num = get_line_number(content, idx) if idx >= 0 else 1
         results.append((name, version, line_num))

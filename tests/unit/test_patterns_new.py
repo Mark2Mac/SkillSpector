@@ -1309,6 +1309,19 @@ class TestSupplyChainHelpers:
         assert versions["boto3"] is None
         assert versions["flask"] is None
 
+    def test_extract_packages_requirements_keeps_full_pep440_pins(self) -> None:
+        content = (
+            "pillow==10.0.0rc1\n"
+            "pillow-post==10.0.0.post1  # supported post-release pin\n"
+            "pillow-epoch==1!10.0\n"
+        )
+        versions = {p[0]: p[1] for p in sc_mod._extract_packages_from_requirements(content)}
+        assert versions == {
+            "pillow": "10.0.0rc1",
+            "pillow-post": "10.0.0.post1",
+            "pillow-epoch": "1!10.0",
+        }
+
     def test_extract_packages_pyproject_specifier_is_not_a_pin(self) -> None:
         content = (
             "[build-system]\n"
@@ -1321,6 +1334,19 @@ class TestSupplyChainHelpers:
         assert versions["setuptools"] is None
         assert versions["httpx"] is None
         assert versions["rich"] is None
+
+    def test_extract_packages_pyproject_keeps_full_pep440_pins(self) -> None:
+        content = (
+            "[project]\n"
+            'dependencies = ["pillow==10.0.0rc1", "pillow-post==10.0.0.post1", '
+            '"pillow-epoch==1!10.0"]\n'
+        )
+        versions = {p[0]: p[1] for p in sc_mod._extract_packages_from_pyproject(content)}
+        assert versions == {
+            "pillow": "10.0.0rc1",
+            "pillow-post": "10.0.0.post1",
+            "pillow-epoch": "1!10.0",
+        }
 
     def test_extract_packages_package_json_caret_is_not_a_pin(self) -> None:
         content = (
