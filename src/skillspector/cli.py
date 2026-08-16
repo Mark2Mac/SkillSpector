@@ -313,13 +313,15 @@ def scan(
     """
     if mcp_registry:
         if recursive or baseline is not None or show_suppressed or yara_rules_dir is not None:
-            console.print(
+            err_console.print(
                 "[red]Error:[/red] --mcp-registry cannot be combined with "
                 "--recursive, --baseline, --show-suppressed, or --yara-rules-dir"
             )
             raise typer.Exit(code=2)
         if format != FormatChoice.json:
-            console.print("[red]Error:[/red] --mcp-registry currently supports only --format json")
+            err_console.print(
+                "[red]Error:[/red] --mcp-registry currently supports only --format json"
+            )
             raise typer.Exit(code=2)
         try:
             result = scan_registry(input_path)
@@ -334,7 +336,7 @@ def scan(
         except typer.Exit:
             raise
         except Exception as e:
-            console.print(f"[red]Error:[/red] {e}")
+            err_console.print(f"[red]Error:[/red] {e}")
             raise typer.Exit(code=2) from e
         return
 
@@ -346,13 +348,13 @@ def scan(
         try:
             resolved_path = validate_local_input_path(resolved_path)
         except ValueError as e:
-            console.print(f"[red]Error:[/red] {e}")
+            err_console.print(f"[red]Error:[/red] {e}")
             raise typer.Exit(code=2) from e
     if recursive and resolved_path.is_dir():
         detection = detect_skills(resolved_path)
         if detection.is_multi_skill:
             if baseline is not None:
-                console.print(
+                err_console.print(
                     "[red]Error:[/red] --baseline is not supported for recursive "
                     "multi-skill scans; scan each sub-skill with its own baseline"
                 )
@@ -428,13 +430,13 @@ def scan(
     except typer.Exit:
         raise
     except (FileNotFoundError, ValueError) as e:
-        console.print(f"[red]Error:[/red] {e}")
+        err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=2) from e
     except Exception as e:
         if verbose:
-            console.print_exception()
+            err_console.print_exception()
         else:
-            console.print(f"[red]Error:[/red] {e}")
+            err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=2) from e
     finally:
         if result is not None:
@@ -494,7 +496,7 @@ def _scan_multi_skill(
             severity = result.get("risk_severity") or "LOW"
             console.print(f"         Score: {score}/100 ({severity})\n")
         except Exception as e:
-            console.print(f"         [red]Error:[/red] {e}\n")
+            err_console.print(f"         [red]Error:[/red] {e}\n")
             execution_failed = True
             results.append({"skill_name": skill.name, "error": str(e)})
 
@@ -608,7 +610,7 @@ def mcp(
 
         run_mcp(transport=transport.value, host=host, port=port)
     except ModuleNotFoundError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=2) from e
 
 
@@ -682,13 +684,13 @@ def baseline(
     except typer.Exit:
         raise
     except (FileNotFoundError, ValueError) as e:
-        console.print(f"[red]Error:[/red] {e}")
+        err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=2) from e
     except Exception as e:
         if verbose:
-            console.print_exception()
+            err_console.print_exception()
         else:
-            console.print(f"[red]Error:[/red] {e}")
+            err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=2) from e
     finally:
         if result is not None:
