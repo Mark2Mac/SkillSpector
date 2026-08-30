@@ -151,6 +151,24 @@ def _uses_native_connection_retries(
 # thread. Nothing blocks a worker thread while it waits, which rules out the obvious alternative
 # of wrapping a ``threading.Semaphore`` in ``run_in_executor``: that pins one thread per queued
 # request, and the queue is exactly as long as the fan-out this is meant to bound.
+class _Handover:
+    """One queued waiter, plus the fact of whether the permit was already given to it.
+
+    ``granted`` is the whole point. A permit changes hands in two steps — taken out of the queue
+    here, delivered by ``_settle`` on the waiter's own loop — and the waiter can be cancelled
+    between them. Asking the future what happened cannot answer that question: a cancelled future
+    looks exactly like one that was never chosen. So the transfer is recorded explicitly, under
+    the same lock that performs it.
+    """
+
+    __slots__ = ("future", "granted", "loop")
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, future: asyncio.Future) -> None:
+        self.loop = loop
+        self.future = future
+        self.granted = False
+
+
 class _GlobalLLMLimiter:
     """A permit counter shared by every event loop and thread in the process."""
 
@@ -158,9 +176,9 @@ class _GlobalLLMLimiter:
         self._limit = max(1, limit)
         self._lock = threading.Lock()
         self._in_flight = 0
-        # (loop, future) in arrival order. FIFO, so a late analyzer is not starved by an early
-        # one that keeps re-acquiring.
-        self._waiters: deque[tuple[asyncio.AbstractEventLoop, asyncio.Future]] = deque()
+        # Arrival order. FIFO, so a late analyzer is not starved by an early one that keeps
+        # re-acquiring.
+        self._waiters: deque[_Handover] = deque()
 
     async def acquire(self) -> None:
         loop = asyncio.get_running_loop()
@@ -168,36 +186,39 @@ class _GlobalLLMLimiter:
             if self._in_flight < self._limit:
                 self._in_flight += 1
                 return
-            waiter: asyncio.Future = loop.create_future()
-            self._waiters.append((loop, waiter))
+            handover = _Handover(loop, loop.create_future())
+            self._waiters.append(handover)
         try:
-            await waiter
+            await handover.future
         except BaseException:
-            # Cancelled or timed out while queued. Leaving the future in the deque would let a
+            # Cancelled or timed out while queued. Leaving the waiter in the deque would let a
             # later release() hand a permit to a coroutine that is already gone, and the permit
             # would never come back.
             with self._lock:
                 try:
-                    self._waiters.remove((loop, waiter))
+                    self._waiters.remove(handover)
                 except ValueError:
                     pass  # already taken out of the queue: the handover was in flight
-            if waiter.done() and not waiter.cancelled() and waiter.exception() is None:
-                # The permit arrived in the same instant the wait was abandoned. It is ours and
-                # nobody will use it: pass it on rather than leak it.
+                granted = handover.granted
+            if granted:
+                # The permit was handed to us and nobody will use it — whether the callback has
+                # run yet or is still queued on this loop. Pass it on rather than leak it.
                 self.release()
             raise
 
     def release(self) -> None:
         with self._lock:
             while self._waiters:
-                loop, waiter = self._waiters.popleft()
-                if waiter.cancelled():
+                handover = self._waiters.popleft()
+                if handover.future.cancelled():
                     continue
                 try:
                     # The permit is transferred, not returned: _in_flight stays as it is.
-                    loop.call_soon_threadsafe(_settle, waiter)
+                    handover.granted = True
+                    handover.loop.call_soon_threadsafe(_settle, handover.future)
                 except RuntimeError:
                     # That loop is closed — its waiter can never run. Try the next one.
+                    handover.granted = False
                     continue
                 return
             self._in_flight = max(0, self._in_flight - 1)

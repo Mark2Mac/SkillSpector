@@ -43,6 +43,7 @@ from skillspector.llm_analyzer_base import (
     LLMAnalyzerBase,
     LLMFinding,
     LLMRuntimeLimitError,
+    _GlobalLLMLimiter,
     _shared_limiter,
     append_output_language_instruction,
     chunk_file_by_lines,
@@ -2927,3 +2928,50 @@ class TestConcurrencyIsGlobalAcrossLoops:
             return limiter._in_flight
 
         assert asyncio.run(_exercise()) == 0, "the limiter leaked a permit"
+
+    @patch(MOCK_PATCH_TARGET, _mock_get_chat_model)
+    def test_a_permit_handed_to_a_waiter_cancelled_mid_handover_comes_back(self) -> None:
+        """Cancellation between the handover and its callback must not swallow the permit.
+
+        ``release()`` transfers the permit: it takes the waiter out of the queue, leaves
+        ``_in_flight`` alone and schedules ``_settle`` on the waiter's loop. Everything between
+        that scheduling and the callback running is a window, and it is wide — the callback is
+        queued on *another* loop, on another thread. A task cancelled inside that window used to
+        take the permit with it: the waiter was already gone from the deque, and the guard in
+        ``acquire()`` asked whether the future had resolved, which a cancelled future never has.
+        The test above cancels *before* the release, so it never opens this window.
+        """
+
+        async def _exercise() -> int:
+            limiter = _GlobalLLMLimiter(1)
+            await limiter.acquire()
+            queued = asyncio.ensure_future(limiter.acquire())
+            await asyncio.sleep(0)  # park it in the deque
+
+            # Hold the handover callback instead of running it, which is the delay a busy loop
+            # on another thread produces on its own.
+            loop = asyncio.get_running_loop()
+            deferred: list[tuple] = []
+            real_call_soon = loop.call_soon_threadsafe
+            loop.call_soon_threadsafe = lambda cb, *args: deferred.append((cb, args))  # type: ignore[method-assign]
+            try:
+                limiter.release()
+            finally:
+                loop.call_soon_threadsafe = real_call_soon  # type: ignore[method-assign]
+            assert deferred, "release() handed the permit to nobody: the window never opened"
+
+            queued.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await queued
+            for callback, args in deferred:  # the handover lands, late, on a dead waiter
+                callback(*args)
+
+            # The permit must be back. With the bug it never is, and this is where a real scan
+            # stops: not with an error, with a wait that no longer has an end.
+            await asyncio.wait_for(limiter.acquire(), timeout=1.0)
+            limiter.release()
+            return limiter._in_flight
+
+        assert asyncio.run(_exercise()) == 0, (
+            "the limiter stranded a permit handed to a cancelled waiter"
+        )
